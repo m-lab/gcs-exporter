@@ -1,0 +1,8 @@
+FROM golang:1.13 as build
+ENV CGO_ENABLED 0
+ENV GOPATH /go
+COPY . /go/src/github.com/m-lab/gcs-exporter/
+WORKDIR /go/src/github.com/m-lab/gcs-exporter/
+RUN go get -t -v ./
+RUN go vet ./...
+RUN go test -v ./...
