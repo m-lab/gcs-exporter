@@ -165,7 +165,6 @@ func getExperimentAndDatatypes(ctx context.Context, bucket string, w Walker) ([]
 		}
 		for _, dtype := range second {
 			// Filter out year directories. Very M-Lab specific.
-			fmt.Println(dtype)
 			if datatypePattern.MatchString(dtype) {
 				l := labels{
 					Bucket:     bucket,
