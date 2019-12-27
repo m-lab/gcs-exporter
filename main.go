@@ -11,6 +11,7 @@ import (
 	"github.com/m-lab/go/prometheusx"
 	"github.com/m-lab/go/rtx"
 	"github.com/m-lab/go/storagex"
+	"google.golang.org/api/option"
 
 	"cloud.google.com/go/storage"
 	"github.com/prometheus/client_golang/prometheus"
@@ -55,7 +56,7 @@ func main() {
 	flag.Parse()
 	rtx.Must(flagx.ArgsFromEnv(flag.CommandLine), "Failed to parse args")
 
-	client, err := storage.NewClient(mainCtx)
+	client, err := storage.NewClient(mainCtx, option.WithoutAuthentication())
 	rtx.Must(err, "Failed to create client")
 
 	buckets := map[string]gcs.Walker{}
