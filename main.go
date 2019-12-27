@@ -6,11 +6,11 @@ import (
 	"log"
 	"time"
 
+	"github.com/m-lab/gcs-exporter/gcs"
 	"github.com/m-lab/go/flagx"
 	"github.com/m-lab/go/prometheusx"
 	"github.com/m-lab/go/rtx"
 	"github.com/m-lab/go/storagex"
-	"src/github.com/stephen-soltesz/adhoc/gcs-exporter/gcs"
 
 	"cloud.google.com/go/storage"
 	"github.com/prometheus/client_golang/prometheus"
