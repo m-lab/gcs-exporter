@@ -133,7 +133,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 // Update runs the collector query and atomically updates the cached metrics.
 // Update is called automaticlly after the collector is registered.
 func (c *Collector) Update(ctx context.Context, yesterday time.Time) error {
-	log.Println("Starting to walk:", yesterday)
+	log.Println("Starting to walk:", yesterday.Format("2006/01/02"))
 	defer func(start time.Time) {
 		fmt.Println("Update time:", time.Since(start))
 		lastUpdateDuration.Set(time.Since(start).Seconds())
