@@ -33,6 +33,11 @@ var (
 	mainCtx, mainCancel = context.WithCancel(context.Background())
 )
 
+// nextAlignedTime uses the given time, period, and offset to calculte the
+// 'next' date for the gcs-exporter to process. Basically, this should be the
+// most recent day with all data available. Period is typically 24h, and offset
+// is the time within the period after which all data is available. Returns the
+// next time to process and the delay to wait before caller should process that time.
 func nextAlignedTime(now time.Time, period, offset time.Duration) (time.Time, time.Duration) {
 	// Align current time with given period and offset.
 	aligned := now.Truncate(period).Add(offset)
