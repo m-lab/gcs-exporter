@@ -40,7 +40,9 @@ var (
 
 // Walker interface.
 type Walker interface {
+	// Walk recursively visits objects at pathPrefix. See also storagex.Bucket.Walk.
 	Walk(ctx context.Context, pathPrefix string, visit func(o *storagex.Object) error) error
+	// Dirs returns "directory" names found at prefix. See also storagex.Bucket.Dirs.
 	Dirs(ctx context.Context, prefix string) ([]string, error)
 }
 
@@ -56,12 +58,11 @@ type Collector struct {
 	// metrics caches the GCS stats between calls to Update.
 	metrics map[labels]counts
 
-	// descs maps metric suffixes to the prometheus description. These descriptions
-	// are generated once and must be stable over time.
-	descs []*prometheus.Desc
-
-	// mux locks access to types above.
+	// mux locks access to the metrics field.
 	mux sync.Mutex
+
+	// descs holds static metric descriptions for metrics. Must be stable over time.
+	descs []*prometheus.Desc
 }
 
 type labels struct {
@@ -131,7 +132,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 }
 
 // Update runs the collector query and atomically updates the cached metrics.
-// Update is called automaticlly after the collector is registered.
+// Update is called automatically after the collector is registered.
 func (c *Collector) Update(ctx context.Context, yesterday time.Time) error {
 	log.Println("Starting to walk:", yesterday.Format("2006/01/02"))
 	defer func(start time.Time) {
