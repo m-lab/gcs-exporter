@@ -77,6 +77,8 @@ type counts struct {
 }
 
 // NewCollector creates a new GCS Collector instance.
+// TODO(github.com/m-lab/gcs-exporter/issues/2): if this can be implemented
+// using standard metrics, do that.
 func NewCollector(buckets map[string]Walker, first time.Time) *Collector {
 	return &Collector{
 		buckets:  buckets,
