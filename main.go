@@ -20,12 +20,12 @@ import (
 var (
 	sources     flagx.StringArray
 	prefix      string
-	collectTime = flagx.Time{Hour: 4, Minute: 10}
+	collectTime time.Duration
 )
 
 func init() {
 	flag.Var(&sources, "source", "gs://<bucket>")
-	flag.Var(&collectTime, "time", "Run collections at given UTC time daily.")
+	flag.DurationVar(&collectTime, "time", 4*time.Hour+10*time.Minute, "Run collections at given UTC time daily.")
 	log.SetFlags(log.LUTC | log.Lshortfile | log.Ltime | log.Ldate)
 }
 
@@ -62,12 +62,7 @@ func main() {
 		buckets[s] = storagex.NewBucket(client.Bucket(s))
 	}
 
-	// Calculate static time offset used before calculating the latest complete day.
-	offset := time.Duration(collectTime.Hour)*time.Hour +
-		time.Duration(collectTime.Minute)*time.Minute +
-		time.Duration(collectTime.Second)*time.Second
-
-	next := nextUpdateTime(time.Now().UTC(), 24*time.Hour, offset)
+	next := nextUpdateTime(time.Now().UTC(), 24*time.Hour, collectTime)
 	// Initialize the collector starting two days in the past. The loop below will
 	// get the most recent day on the first round.
 	c := gcs.NewCollector(buckets, next.Add(-48*time.Hour))
@@ -78,7 +73,7 @@ func main() {
 
 	for {
 		now := time.Now().UTC()
-		next := nextUpdateTime(now, 24*time.Hour, offset)
+		next := nextUpdateTime(now, 24*time.Hour, collectTime)
 		delay := next.Sub(now)
 		priorDay := next.Add(-24 * time.Hour)
 
