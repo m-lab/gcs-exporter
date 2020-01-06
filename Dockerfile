@@ -1,7 +1,16 @@
 FROM golang:1.13 as build
-ENV CGO_ENABLED 0
+# Must be enabled for "go test -race ..."
+ENV CGO_ENABLED 1
 ENV GOPATH /go
 COPY . /go/src/github.com/m-lab/gcs-exporter/
+WORKDIR /go/src/github.com/m-lab/gcs-exporter/
+# Get test dependencies & run tests.
+RUN go get -t -v ./
+RUN go get -t -v ./gcs/
+RUN go test -race -v ./...
+
+# Build a fully statically linked image.
+ENV CGO_ENABLED 0
 # Build and put the git commit hash into the binary.
 RUN go get \
       -v \
