@@ -1,0 +1,14 @@
+timeout: 30m
+
+steps:
+# Build & test container.
+- name: gcr.io/cloud-builders/docker
+  args: [
+    'build', '-t', 'gcr.io/$PROJECT_ID/gcs-exporter:$COMMIT_SHA', '.'
+  ]
+
+# Publish container to local GCR repo.
+images: [
+  'gcr.io/$PROJECT_ID/gcs-exporter:$COMMIT_SHA'
+]
+
