@@ -58,8 +58,8 @@ type Collector struct {
 	// metrics caches the GCS stats between calls to Update.
 	metrics map[labels]counts
 
-	// mux locks access to the metrics field.
-	mux sync.Mutex
+	// mutex locks access to the metrics field.
+	mutex sync.Mutex
 
 	// descs holds static metric descriptions for metrics. Must be stable over time.
 	descs []*prometheus.Desc
@@ -116,8 +116,8 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 // Collect satisfies the prometheus.Collector interface. Collect reports values
 // from cached metrics.
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
-	c.mux.Lock()
-	defer c.mux.Unlock()
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 
 	for l, v := range c.metrics {
 		ch <- prometheus.MustNewConstMetric(
@@ -135,15 +135,15 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 // Update is called automatically after the collector is registered.
 func (c *Collector) Update(ctx context.Context, yesterday time.Time) error {
 	log.Println("Starting to walk:", yesterday.Format("2006/01/02"))
-	defer func(start time.Time) {
-		fmt.Println("Update time:", time.Since(start))
-		lastUpdateDuration.Set(time.Since(start).Seconds())
-	}(time.Now())
+	start := time.Now()
 
 	metrics, err := c.collect(ctx, yesterday)
-	c.mux.Lock()
+	c.mutex.Lock()
 	c.metrics = metrics
-	c.mux.Unlock()
+	c.mutex.Unlock()
+
+	fmt.Println("Update time:", time.Since(start))
+	lastUpdateDuration.Set(time.Since(start).Seconds())
 	return err
 }
 
@@ -165,7 +165,8 @@ func getExperimentAndDatatypes(ctx context.Context, bucket string, w Walker) ([]
 			return nil, err
 		}
 		for _, dtype := range second {
-			// Filter out year directories. Very M-Lab specific.
+			// datatypePattern selects valid M-Lab datatype directories. This is very
+			// M-Lab specific. In particular, the pattern should ignore YYYY directories.
 			if datatypePattern.MatchString(dtype) {
 				l := labels{
 					Bucket:     bucket,
@@ -181,7 +182,7 @@ func getExperimentAndDatatypes(ctx context.Context, bucket string, w Walker) ([]
 
 func (c *Collector) collect(ctx context.Context, date time.Time) (map[labels]counts, error) {
 	ret := map[labels]counts{}
-	mux := sync.Mutex{}
+	m := sync.Mutex{}
 	wg := sync.WaitGroup{}
 
 	for bucket, walker := range c.buckets {
@@ -200,12 +201,12 @@ func (c *Collector) collect(ctx context.Context, date time.Time) (map[labels]cou
 					updateErrors.WithLabelValues("count").Inc()
 					log.Println("Failure counting:", l, "error:", err)
 				}
-				mux.Lock()
+				m.Lock()
 				v := ret[l]
 				v.files += files
 				v.size += size
 				ret[l] = v
-				mux.Unlock()
+				m.Unlock()
 				wg.Done()
 			}(walker, edt)
 		}
@@ -218,13 +219,7 @@ func (c *Collector) count(ctx context.Context, w Walker, label labels, date time
 	var files int64
 	var size int64
 	prefix := label.Experiment + "/" + label.Datatype + "/" + date.Format("2006/01/02/")
-
-	// Record & report runtime.
-	defer func(start time.Time) {
-		lastCollectionDuration.WithLabelValues(
-			label.Bucket, label.Experiment, label.Datatype).Set(time.Since(start).Seconds())
-		log.Printf("Finished walking: %-32s %0.6f %5d %5d", prefix, time.Since(start).Seconds(), files, size)
-	}(time.Now())
+	start := time.Now()
 
 	// Count number of files.
 	err := w.Walk(ctx, prefix, func(o *storagex.Object) error {
@@ -234,5 +229,10 @@ func (c *Collector) count(ctx context.Context, w Walker, label labels, date time
 		files++
 		return nil
 	})
+
+	// Record & report runtime.
+	lastCollectionDuration.WithLabelValues(
+		label.Bucket, label.Experiment, label.Datatype).Set(time.Since(start).Seconds())
+	log.Printf("Finished walking: %-32s %0.6f %5d %5d", prefix, time.Since(start).Seconds(), files, size)
 	return files, size, err
 }
