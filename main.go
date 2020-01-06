@@ -33,22 +33,21 @@ var (
 	mainCtx, mainCancel = context.WithCancel(context.Background())
 )
 
-// nextAlignedTime uses the given time, period, and offset to calculte the
-// 'next' date for the gcs-exporter to process. Basically, this should be the
-// most recent day with all data available. Period is typically 24h, and offset
-// is the time within the period after which all data is available. Returns the
-// next time to process and the delay to wait before caller should process that time.
-func nextAlignedTime(now time.Time, period, offset time.Duration) (time.Time, time.Duration) {
+// nextUpdateTime returns the next time that the collector should run Update().
+// The time is aligned on period with the offset added. Period is typically 24h,
+// and offset is the time within the period after which all data is available.
+//
+// Using the 'next' update time, the caller should calculate a wait time using
+// something like `next.Sub(now)` and the "date to process" using `next.Add(-period)`.
+func nextUpdateTime(now time.Time, period, offset time.Duration) time.Time {
 	// Align current time with given period and offset.
 	aligned := now.Truncate(period).Add(offset)
 	if now.After(aligned) {
-		// We've missed the time today, so calculate delay between now and next period.
-		wait := period - now.Sub(aligned)
-		next := aligned.Add(wait)
-		return next.Add(-period), wait
+		// We've already passed the aligned time today. So, adjust aligned to next period.
+		return aligned.Add(period)
 	}
-	// The current time is after the aligned time.
-	return aligned.Add(-period), aligned.Sub(now)
+	// The aligned time is already in the future, so just return that.
+	return aligned
 }
 
 func main() {
@@ -68,25 +67,30 @@ func main() {
 		time.Duration(collectTime.Minute)*time.Minute +
 		time.Duration(collectTime.Second)*time.Second
 
-	next, _ := nextAlignedTime(time.Now().UTC(), 24*time.Hour, offset)
-	// Initialize the collector starting an additional day in the past.
-	c := gcs.NewCollector(buckets, next.Add(-24*time.Hour))
+	next := nextUpdateTime(time.Now().UTC(), 24*time.Hour, offset)
+	// Initialize the collector starting two days in the past. The loop below will
+	// get the most recent day on the first round.
+	c := gcs.NewCollector(buckets, next.Add(-48*time.Hour))
 	prometheus.MustRegister(c)
 
 	srv := prometheusx.MustServeMetrics()
 	defer srv.Close()
 
 	for {
-		next, delay := nextAlignedTime(time.Now().UTC(), 24*time.Hour, offset)
-		log.Printf("Sleeping: %s until next update at %s", delay, next)
+		now := time.Now().UTC()
+		next := nextUpdateTime(now, 24*time.Hour, offset)
+		delay := next.Sub(now)
+		priorDay := next.Add(-24 * time.Hour)
+
+		log.Printf("Sleeping: %s until next update for %s", delay, priorDay)
 
 		select {
 		case <-mainCtx.Done():
 			return
 		case <-time.After(delay):
 			// NOTE: ignore Update errors.
-			// NOTE: sqhould only update once a day.
-			c.Update(mainCtx, next)
+			// NOTE: should only update once a day.
+			c.Update(mainCtx, priorDay)
 		}
 	}
 }
