@@ -59,7 +59,9 @@ func main() {
 	}
 
 	// Calculate static time offset used before calculating the latest complete day.
-	offset := time.Duration(collectTime.Hour*60*60+collectTime.Minute*60+collectTime.Second) * time.Second
+	offset := time.Duration(collectTime.Hour)*time.Hour +
+		time.Duration(collectTime.Minute)*time.Minute +
+		time.Duration(collectTime.Second)*time.Second
 
 	next, _ := nextAlignedTime(time.Now().UTC(), 24*time.Hour, offset)
 	// Initialize the collector starting an additional day in the past.
