@@ -11,7 +11,7 @@ RUN go get \
 
 # Now copy the cbif binary into a minimal base image.
 FROM alpine
-# Download but prevent saving APKINDEX files with -no-cache.
+# Add package, but prevent saving APKINDEX files with -no-cache.
 RUN apk add --no-cache ca-certificates
 COPY --from=build /go/bin/gcs-exporter /
 ENV PATH /:$PATH
