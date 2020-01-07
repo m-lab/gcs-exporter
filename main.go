@@ -76,10 +76,10 @@ func main() {
 		buckets[s] = storagex.NewBucket(client.Bucket(s))
 	}
 
-	next := nextUpdateTime(time.Now().UTC(), 24*time.Hour, collectTime)
+	nextUpdate := nextUpdateTime(time.Now().UTC(), 24*time.Hour, collectTime)
 	// Initialize the collector starting two days in the past. The loop below will
 	// get the most recent day on the first round.
-	c := gcs.NewCollector(buckets, next.Add(-48*time.Hour))
+	c := gcs.NewCollector(buckets, nextUpdate.Add(-48*time.Hour))
 	prometheus.MustRegister(c)
 
 	srv := prometheusx.MustServeMetrics()
@@ -87,9 +87,8 @@ func main() {
 
 	for {
 		now := time.Now().UTC()
-		next := nextUpdateTime(now, 24*time.Hour, collectTime)
-		delay := next.Sub(now)
-		priorDay := next.Add(-24 * time.Hour)
+		delay := nextUpdate.Sub(now)
+		priorDay := nextUpdate.Add(-24 * time.Hour)
 
 		log.Printf("Sleeping: %s until next update for %s", delay, priorDay)
 
@@ -97,15 +96,11 @@ func main() {
 		case <-mainCtx.Done():
 			return
 		case <-time.After(delay):
-			// NOTE: Update should only run once a day. time.After can return early
-			// under some conditions, which could result in running Update twice on
-			// the same day. So, continue to wait until current time is after 'next'.
-			for n := time.Now().UTC(); next.After(n); n = time.Now().UTC() {
-				log.Println("time.After fired early: sleeping", next.Sub(n))
-				time.Sleep(next.Sub(n))
-			}
+			// NOTE: Update should only run once a day.
 			// NOTE: ignore Update errors.
 			c.Update(mainCtx, priorDay)
+			// Update nextUpdate to tomorrow.
+			nextUpdate = nextUpdate.Add(24 * time.Hour)
 		}
 	}
 }
