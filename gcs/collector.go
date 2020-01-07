@@ -2,7 +2,6 @@ package gcs
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"regexp"
 	"strings"
@@ -144,7 +143,7 @@ func (c *Collector) Update(ctx context.Context, yesterday time.Time) error {
 	c.metrics = metrics
 	c.mutex.Unlock()
 
-	fmt.Println("Update time:", time.Since(start))
+	log.Println("Total time to Update:", time.Since(start))
 	lastUpdateDuration.Set(time.Since(start).Seconds())
 	return err
 }
