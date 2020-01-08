@@ -26,6 +26,7 @@ import (
 	"github.com/m-lab/go/prometheusx"
 	"github.com/m-lab/go/rtx"
 	"github.com/m-lab/go/storagex"
+	"google.golang.org/api/option"
 
 	"cloud.google.com/go/storage"
 	"github.com/prometheus/client_golang/prometheus"
@@ -64,11 +65,15 @@ func nextUpdateTime(now time.Time, period, offset time.Duration) time.Time {
 	return aligned
 }
 
+var (
+	opts []option.ClientOption
+)
+
 func main() {
 	flag.Parse()
 	rtx.Must(flagx.ArgsFromEnv(flag.CommandLine), "Failed to parse args")
 
-	client, err := storage.NewClient(mainCtx)
+	client, err := storage.NewClient(mainCtx, opts...)
 	rtx.Must(err, "Failed to create client")
 
 	buckets := map[string]gcs.Walker{}
