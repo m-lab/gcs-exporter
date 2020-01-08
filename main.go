@@ -1,3 +1,18 @@
+// Copyright 2020 gcs-exporter Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//////////////////////////////////////////////////////////////////////////////
+
 package main
 
 import (
@@ -50,11 +65,15 @@ func nextUpdateTime(now time.Time, period, offset time.Duration) time.Time {
 	return aligned
 }
 
+var (
+	opts []option.ClientOption
+)
+
 func main() {
 	flag.Parse()
 	rtx.Must(flagx.ArgsFromEnv(flag.CommandLine), "Failed to parse args")
 
-	client, err := storage.NewClient(mainCtx, option.WithoutAuthentication())
+	client, err := storage.NewClient(mainCtx, opts...)
 	rtx.Must(err, "Failed to create client")
 
 	buckets := map[string]gcs.Walker{}
@@ -62,10 +81,10 @@ func main() {
 		buckets[s] = storagex.NewBucket(client.Bucket(s))
 	}
 
-	next := nextUpdateTime(time.Now().UTC(), 24*time.Hour, collectTime)
+	nextUpdate := nextUpdateTime(time.Now().UTC(), 24*time.Hour, collectTime)
 	// Initialize the collector starting two days in the past. The loop below will
 	// get the most recent day on the first round.
-	c := gcs.NewCollector(buckets, next.Add(-48*time.Hour))
+	c := gcs.NewCollector(buckets, nextUpdate.Add(-48*time.Hour))
 	prometheus.MustRegister(c)
 
 	srv := prometheusx.MustServeMetrics()
@@ -73,9 +92,8 @@ func main() {
 
 	for {
 		now := time.Now().UTC()
-		next := nextUpdateTime(now, 24*time.Hour, collectTime)
-		delay := next.Sub(now)
-		priorDay := next.Add(-24 * time.Hour)
+		delay := nextUpdate.Sub(now)
+		priorDay := nextUpdate.Add(-24 * time.Hour)
 
 		log.Printf("Sleeping: %s until next update for %s", delay, priorDay)
 
@@ -83,9 +101,11 @@ func main() {
 		case <-mainCtx.Done():
 			return
 		case <-time.After(delay):
+			// NOTE: Update should only run once a day.
 			// NOTE: ignore Update errors.
-			// NOTE: should only update once a day.
 			c.Update(mainCtx, priorDay)
+			// Update nextUpdate to tomorrow.
+			nextUpdate = nextUpdate.Add(24 * time.Hour)
 		}
 	}
 }
