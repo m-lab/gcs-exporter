@@ -50,6 +50,20 @@ var (
 		},
 		[]string{"type"},
 	)
+	archiveFiles = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gcs_archive_files_total",
+			Help: "GCS archive file count",
+		},
+		[]string{"bucket", "experiment", "datatype"},
+	)
+	archiveBytes = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gcs_archive_bytes_total",
+			Help: "GCS archive file count",
+		},
+		[]string{"bucket", "experiment", "datatype"},
+	)
 )
 
 // Walker interface.
@@ -67,7 +81,7 @@ type Collector struct {
 
 	// initTime is used once during registration to update metrics for the first
 	// time, typically "yesterday".
-	initTime time.Time
+	// initTime time.Time
 
 	// metrics caches the GCS stats between calls to Update.
 	metrics map[labels]counts
@@ -93,57 +107,9 @@ type counts struct {
 // NewCollector creates a new GCS Collector instance.
 // TODO(github.com/m-lab/gcs-exporter/issues/2): if this can be implemented
 // using standard metrics, do that.
-func NewCollector(buckets map[string]Walker, first time.Time) *Collector {
+func NewCollector(buckets map[string]Walker) *Collector {
 	return &Collector{
-		buckets:  buckets,
-		initTime: first,
-	}
-}
-
-// Describe satisfies the prometheus.Collector interface. Describe is called
-// immediately after registering the collector.
-func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
-	if c.descs == nil {
-		// Provide an absolute upper bound on run time. This take less than a minute.
-		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
-		defer cancel()
-
-		// Collect metrics using the first initTime.
-		c.Update(ctx, c.initTime)
-
-		// On success, assign expected metric descriptions.
-		if len(c.metrics) > 0 {
-			c.descs = []*prometheus.Desc{
-				prometheus.NewDesc(
-					"gcs_archive_files_total", "GCS archive file count",
-					[]string{"bucket", "experiment", "datatype"}, nil),
-				prometheus.NewDesc(
-					"gcs_archive_bytes_total", "GCS archive file sizes",
-					[]string{"bucket", "experiment", "datatype"}, nil),
-			}
-		}
-	}
-	// NOTE: if Update returns no metrics, this will fail.
-	for _, desc := range c.descs {
-		ch <- desc
-	}
-}
-
-// Collect satisfies the prometheus.Collector interface. Collect reports values
-// from cached metrics.
-func (c *Collector) Collect(ch chan<- prometheus.Metric) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	for l, v := range c.metrics {
-		ch <- prometheus.MustNewConstMetric(
-			c.descs[0], prometheus.CounterValue,
-			float64(v.files),
-			[]string{l.Bucket, l.Experiment, l.Datatype}...)
-		ch <- prometheus.MustNewConstMetric(
-			c.descs[1], prometheus.CounterValue,
-			float64(v.size),
-			[]string{l.Bucket, l.Experiment, l.Datatype}...)
+		buckets: buckets,
 	}
 }
 
@@ -154,9 +120,10 @@ func (c *Collector) Update(ctx context.Context, yesterday time.Time) error {
 	start := time.Now()
 
 	metrics, err := c.collect(ctx, yesterday)
-	c.mutex.Lock()
-	c.metrics = metrics
-	c.mutex.Unlock()
+	for l, c := range metrics {
+		archiveFiles.WithLabelValues(l.Bucket, l.Experiment, l.Datatype).Add(float64(c.files))
+		archiveBytes.WithLabelValues(l.Bucket, l.Experiment, l.Datatype).Add(float64(c.size))
+	}
 
 	log.Println("Total time to Update:", time.Since(start))
 	lastUpdateDuration.Set(time.Since(start).Seconds())

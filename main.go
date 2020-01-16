@@ -19,6 +19,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/m-lab/gcs-exporter/gcs"
@@ -29,18 +30,16 @@ import (
 	"google.golang.org/api/option"
 
 	"cloud.google.com/go/storage"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
-	sources     flagx.StringArray
-	prefix      string
-	collectTime time.Duration
+	sources      flagx.StringArray
+	collectTimes flagx.DurationArray
 )
 
 func init() {
 	flag.Var(&sources, "source", "gs://<bucket>")
-	flag.DurationVar(&collectTime, "time", 4*time.Hour+10*time.Minute, "Run collections at given UTC time daily.")
+	flag.Var(&collectTimes, "time", "Run collections at given UTC time daily.")
 	log.SetFlags(log.LUTC | log.Lshortfile | log.Ltime | log.Ldate)
 }
 
@@ -81,14 +80,30 @@ func main() {
 		buckets[s] = storagex.NewBucket(client.Bucket(s))
 	}
 
-	nextUpdate := nextUpdateTime(time.Now().UTC(), 24*time.Hour, collectTime)
-	// Initialize the collector starting two days in the past. The loop below will
-	// get the most recent day on the first round.
-	c := gcs.NewCollector(buckets, nextUpdate.Add(-48*time.Hour))
-	prometheus.MustRegister(c)
+	if len(buckets) != len(collectTimes) {
+		log.Fatal("Must provide same number of collection times as sources.")
+	}
 
 	srv := prometheusx.MustServeMetrics()
 	defer srv.Close()
+
+	c := gcs.NewCollector(buckets)
+	wg := sync.WaitGroup{}
+
+	for _, t := range collectTimes {
+		wg.Add(1)
+		go updateForever(mainCtx, &wg, c, t)
+	}
+
+	wg.Wait()
+}
+
+func updateForever(ctx context.Context, wg *sync.WaitGroup, c *gcs.Collector, collect time.Duration) {
+	defer wg.Done()
+	nextUpdate := nextUpdateTime(time.Now().UTC(), 24*time.Hour, collect)
+	// Initialize the collector starting two days in the past. The loop below will
+	// get the most recent day on the first round.
+	c.Update(mainCtx, nextUpdate.Add(-48*time.Hour))
 
 	for {
 		now := time.Now().UTC()
@@ -108,4 +123,5 @@ func main() {
 			nextUpdate = nextUpdate.Add(24 * time.Hour)
 		}
 	}
+
 }
