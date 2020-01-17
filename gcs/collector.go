@@ -74,25 +74,6 @@ type Walker interface {
 	Dirs(ctx context.Context, prefix string) ([]string, error)
 }
 
-// Collector manages a prometheus.Collector for statistics about GCS.
-type Collector struct {
-	// buckets maps GCS bucket names to Walkers used to read GCS object stats.
-	buckets map[string]Walker
-
-	// initTime is used once during registration to update metrics for the first
-	// time, typically "yesterday".
-	// initTime time.Time
-
-	// metrics caches the GCS stats between calls to Update.
-	metrics map[labels]counts
-
-	// mutex locks access to the metrics field.
-	mutex sync.Mutex
-
-	// descs holds static metric descriptions for metrics. Must be stable over time.
-	descs []*prometheus.Desc
-}
-
 type labels struct {
 	Bucket     string
 	Experiment string
@@ -101,28 +82,19 @@ type labels struct {
 
 type counts struct {
 	files int64
-	size  int64
-}
-
-// NewCollector creates a new GCS Collector instance.
-// TODO(github.com/m-lab/gcs-exporter/issues/2): if this can be implemented
-// using standard metrics, do that.
-func NewCollector(buckets map[string]Walker) *Collector {
-	return &Collector{
-		buckets: buckets,
-	}
+	bytes int64
 }
 
 // Update runs the collector query and atomically updates the cached metrics.
 // Update is called automatically after the collector is registered.
-func (c *Collector) Update(ctx context.Context, yesterday time.Time) error {
+func Update(ctx context.Context, name string, w Walker, yesterday time.Time) error {
 	log.Println("Starting to walk:", yesterday.Format("2006/01/02"))
 	start := time.Now()
 
-	metrics, err := c.collect(ctx, yesterday)
+	metrics, err := collect(ctx, name, w, yesterday)
 	for l, c := range metrics {
 		archiveFiles.WithLabelValues(l.Bucket, l.Experiment, l.Datatype).Add(float64(c.files))
-		archiveBytes.WithLabelValues(l.Bucket, l.Experiment, l.Datatype).Add(float64(c.size))
+		archiveBytes.WithLabelValues(l.Bucket, l.Experiment, l.Datatype).Add(float64(c.bytes))
 	}
 
 	log.Println("Total time to Update:", time.Since(start))
@@ -140,11 +112,13 @@ func getExperimentAndDatatypes(ctx context.Context, bucket string, w Walker) ([]
 	var ret []labels
 	first, err := w.Dirs(ctx, "")
 	if err != nil {
+		updateErrors.WithLabelValues("dirs-first").Inc()
 		return nil, err
 	}
 	for _, experiment := range first {
 		second, err := w.Dirs(ctx, experiment)
 		if err != nil {
+			updateErrors.WithLabelValues("dirs-second").Inc()
 			return nil, err
 		}
 		for _, dtype := range second {
@@ -163,44 +137,42 @@ func getExperimentAndDatatypes(ctx context.Context, bucket string, w Walker) ([]
 	return ret, nil
 }
 
-func (c *Collector) collect(ctx context.Context, date time.Time) (map[labels]counts, error) {
+func collect(ctx context.Context, bucket string, w Walker, date time.Time) (map[labels]counts, error) {
 	ret := map[labels]counts{}
 	m := sync.Mutex{}
 	wg := sync.WaitGroup{}
 
-	for bucket, walker := range c.buckets {
-		edts, err := getExperimentAndDatatypes(ctx, bucket, walker)
-		if err != nil {
-			updateErrors.WithLabelValues("get-edt").Inc()
-			return nil, err
-		}
-		for _, edt := range edts {
-			// Collect directories in parallel.
-			wg.Add(1)
-			go func(w Walker, l labels) {
-				files, size, err := c.count(ctx, w, l, date)
-				if err != nil {
-					// Not ideal, but not fatal.
-					updateErrors.WithLabelValues("count").Inc()
-					log.Println("Failure counting:", l, "error:", err)
-				}
-				m.Lock()
-				v := ret[l]
-				v.files += files
-				v.size += size
-				ret[l] = v
-				m.Unlock()
-				wg.Done()
-			}(walker, edt)
-		}
+	dtLabels, err := getExperimentAndDatatypes(ctx, bucket, w)
+	if err != nil {
+		updateErrors.WithLabelValues("get-datatypes").Inc()
+		return nil, err
+	}
+	for _, label := range dtLabels {
+		// Collect directories in parallel.
+		wg.Add(1)
+		go func(w Walker, l labels) {
+			files, bytes, err := count(ctx, w, l, date)
+			if err != nil {
+				// Not ideal, but not fatal.
+				updateErrors.WithLabelValues("count").Inc()
+				log.Println("Failure counting:", l, "error:", err)
+			}
+			m.Lock()
+			v := ret[l]
+			v.files += files
+			v.bytes += bytes
+			ret[l] = v
+			m.Unlock()
+			wg.Done()
+		}(w, label)
 	}
 	wg.Wait()
 	return ret, nil
 }
 
-func (c *Collector) count(ctx context.Context, w Walker, label labels, date time.Time) (int64, int64, error) {
+func count(ctx context.Context, w Walker, label labels, date time.Time) (int64, int64, error) {
 	var files int64
-	var size int64
+	var bytes int64
 	prefix := label.Experiment + "/" + label.Datatype + "/" + date.Format("2006/01/02/")
 	start := time.Now()
 
@@ -208,7 +180,8 @@ func (c *Collector) count(ctx context.Context, w Walker, label labels, date time
 	err := w.Walk(ctx, prefix, func(o *storagex.Object) error {
 		// TODO: should be possible to collect min/max creation timestamps to observe transfer start/stop times.
 		// TODO: check that files match archives and count non-matching filenames.
-		size += o.Size
+		// TODO: could generate histogram of archive mtimes.
+		bytes += o.Size
 		files++
 		return nil
 	})
@@ -216,6 +189,6 @@ func (c *Collector) count(ctx context.Context, w Walker, label labels, date time
 	// Record & report runtime.
 	lastCollectionDuration.WithLabelValues(
 		label.Bucket, label.Experiment, label.Datatype).Set(time.Since(start).Seconds())
-	log.Printf("Finished walking: %-32s %0.6f %5d %5d", prefix, time.Since(start).Seconds(), files, size)
-	return files, size, err
+	log.Printf("Finished walking: %-32s %0.6f %5d %5d", prefix, time.Since(start).Seconds(), files, bytes)
+	return files, bytes, err
 }
