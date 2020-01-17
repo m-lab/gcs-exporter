@@ -12,11 +12,14 @@ import (
 )
 
 type fakeWalker struct {
-	dirs map[string][]string
-	walk map[string][]*storagex.Object
+	dirs      map[string][]string
+	dirsCalls int
+	walk      map[string][]*storagex.Object
+	walkCalls int
 }
 
 func (f *fakeWalker) Walk(ctx context.Context, prefix string, visit func(o *storagex.Object) error) error {
+	f.walkCalls++
 	objs := f.walk[prefix]
 	if objs == nil {
 		return fmt.Errorf("Unknown prefix")
@@ -28,6 +31,7 @@ func (f *fakeWalker) Walk(ctx context.Context, prefix string, visit func(o *stor
 }
 
 func (f *fakeWalker) Dirs(ctx context.Context, prefix string) ([]string, error) {
+	f.dirsCalls++
 	dirs := f.dirs[prefix]
 	if dirs == nil {
 		return nil, fmt.Errorf("Unknown prefix")
@@ -99,22 +103,26 @@ func TestUpdate(t *testing.T) {
 					"ndt/": []string{"ndt/pcap/", "ndt/tcpinfo/"},
 				},
 				walk: map[string][]*storagex.Object{
-					// Missing record generates a fake error.
+					// Missing record generates a fake error. This error does not propagate.
 				},
 			},
-			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
+
 			err := Update(ctx, tt.bucket, tt.walker, tt.yesterday)
+
 			if tt.wantErr != (err != nil) {
 				t.Errorf("Failed to register gcs collector %s", err)
 			}
-
 			if !promtest.LintMetrics(t) {
 				t.Errorf("Metrics lint failed")
+			}
+			f := tt.walker.(*fakeWalker)
+			if !tt.wantErr && (f.walkCalls == 0 || f.dirsCalls == 0) {
+				t.Errorf("Unexpected number of calls to Walk(%d) or Dirs(%d)", f.walkCalls, f.dirsCalls)
 			}
 		})
 	}
