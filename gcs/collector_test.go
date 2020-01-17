@@ -3,6 +3,7 @@ package gcs
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,10 +17,13 @@ type fakeWalker struct {
 	dirsCalls int
 	walk      map[string][]*storagex.Object
 	walkCalls int
+	m         sync.Mutex
 }
 
 func (f *fakeWalker) Walk(ctx context.Context, prefix string, visit func(o *storagex.Object) error) error {
+	f.m.Lock()
 	f.walkCalls++
+	f.m.Unlock()
 	objs := f.walk[prefix]
 	if objs == nil {
 		return fmt.Errorf("Unknown prefix")
@@ -31,7 +35,9 @@ func (f *fakeWalker) Walk(ctx context.Context, prefix string, visit func(o *stor
 }
 
 func (f *fakeWalker) Dirs(ctx context.Context, prefix string) ([]string, error) {
+	f.m.Lock()
 	f.dirsCalls++
+	f.m.Unlock()
 	dirs := f.dirs[prefix]
 	if dirs == nil {
 		return nil, fmt.Errorf("Unknown prefix")
