@@ -19,6 +19,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/m-lab/gcs-exporter/gcs"
@@ -29,22 +30,21 @@ import (
 	"google.golang.org/api/option"
 
 	"cloud.google.com/go/storage"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
-	sources     flagx.StringArray
-	prefix      string
-	collectTime time.Duration
+	sources      flagx.StringArray
+	collectTimes flagx.DurationArray
 )
 
 func init() {
 	flag.Var(&sources, "source", "gs://<bucket>")
-	flag.DurationVar(&collectTime, "time", 4*time.Hour+10*time.Minute, "Run collections at given UTC time daily.")
+	flag.Var(&collectTimes, "time", "Run collections at given UTC time daily.")
 	log.SetFlags(log.LUTC | log.Lshortfile | log.Ltime | log.Ldate)
 }
 
 var (
+	opts                []option.ClientOption
 	mainCtx, mainCancel = context.WithCancel(context.Background())
 )
 
@@ -65,36 +65,19 @@ func nextUpdateTime(now time.Time, period, offset time.Duration) time.Time {
 	return aligned
 }
 
-var (
-	opts []option.ClientOption
-)
+// updateForever runs the gcs.Update on the given bucket at the given collect time every day.
+func updateForever(ctx context.Context, wg *sync.WaitGroup, bucket string, walker gcs.Walker, collect time.Duration) {
+	defer wg.Done()
 
-func main() {
-	flag.Parse()
-	rtx.Must(flagx.ArgsFromEnv(flag.CommandLine), "Failed to parse args")
-
-	client, err := storage.NewClient(mainCtx, opts...)
-	rtx.Must(err, "Failed to create client")
-
-	buckets := map[string]gcs.Walker{}
-	for _, s := range sources {
-		buckets[s] = storagex.NewBucket(client.Bucket(s))
-	}
-
-	nextUpdate := nextUpdateTime(time.Now().UTC(), 24*time.Hour, collectTime)
-	// Initialize the collector starting two days in the past. The loop below will
+	nextUpdate := nextUpdateTime(time.Now().UTC(), 24*time.Hour, collect)
+	// Initialize the bucket starting two days in the past. The loop below will
 	// get the most recent day on the first round.
-	c := gcs.NewCollector(buckets, nextUpdate.Add(-48*time.Hour))
-	prometheus.MustRegister(c)
-
-	srv := prometheusx.MustServeMetrics()
-	defer srv.Close()
+	gcs.Update(mainCtx, bucket, walker, nextUpdate.Add(-48*time.Hour))
 
 	for {
 		now := time.Now().UTC()
 		delay := nextUpdate.Sub(now)
 		priorDay := nextUpdate.Add(-24 * time.Hour)
-
 		log.Printf("Sleeping: %s until next update for %s", delay, priorDay)
 
 		select {
@@ -103,9 +86,34 @@ func main() {
 		case <-time.After(delay):
 			// NOTE: Update should only run once a day.
 			// NOTE: ignore Update errors.
-			c.Update(mainCtx, priorDay)
+			gcs.Update(mainCtx, bucket, walker, priorDay)
 			// Update nextUpdate to tomorrow.
 			nextUpdate = nextUpdate.Add(24 * time.Hour)
 		}
 	}
+}
+
+var logFatal = log.Fatal
+
+func main() {
+	flag.Parse()
+	rtx.Must(flagx.ArgsFromEnv(flag.CommandLine), "Failed to parse args")
+
+	if len(sources) != len(collectTimes) {
+		logFatal("Must provide same number of sources as collection times.")
+	}
+
+	srv := prometheusx.MustServeMetrics()
+	defer srv.Close()
+
+	client, err := storage.NewClient(mainCtx, opts...)
+	rtx.Must(err, "Failed to create client")
+
+	wg := sync.WaitGroup{}
+	for i, t := range collectTimes {
+		wg.Add(1)
+		walker := storagex.NewBucket(client.Bucket(sources[i]))
+		go updateForever(mainCtx, &wg, sources[i], walker, t)
+	}
+	wg.Wait()
 }
