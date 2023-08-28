@@ -5,8 +5,8 @@ ENV GOPATH /go
 COPY . /go/src/github.com/m-lab/gcs-exporter/
 WORKDIR /go/src/github.com/m-lab/gcs-exporter/
 # Get test dependencies & run tests.
-RUN go install -t -v ./
-RUN go install -t -v ./gcs/
+RUN go install -v ./
+RUN go install -v ./gcs/
 RUN go test -race -v ./...
 
 # Build a fully statically linked image.
