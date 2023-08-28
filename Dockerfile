@@ -1,4 +1,4 @@
-FROM golang:1.13 as build
+FROM golang:1.20 as build
 # Must be enabled for "go test -race ..."
 ENV CGO_ENABLED 1
 ENV GOPATH /go
