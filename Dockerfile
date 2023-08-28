@@ -5,17 +5,17 @@ ENV GOPATH /go
 COPY . /go/src/github.com/m-lab/gcs-exporter/
 WORKDIR /go/src/github.com/m-lab/gcs-exporter/
 # Get test dependencies & run tests.
-RUN go get -t -v ./
-RUN go get -t -v ./gcs/
+RUN go install -t -v ./
+RUN go install -t -v ./gcs/
 RUN go test -race -v ./...
 
 # Build a fully statically linked image.
 ENV CGO_ENABLED 0
 # Build and put the git commit hash into the binary.
-RUN go get \
+RUN go install \
       -v \
       -ldflags "-X github.com/m-lab/go/prometheusx.GitShortCommit=$(git log -1 --format=%h)" \
-      github.com/m-lab/gcs-exporter
+      github.com/m-lab/gcs-exporter@latest
 
 
 # Now copy the cbif binary into a minimal base image.
